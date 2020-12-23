@@ -1,0 +1,4 @@
+(function() {var implementors = {};
+implementors["polyfuse"] = [{"text":"impl PartialEq&lt;LockOwner&gt; for LockOwner","synthetic":false,"types":[]},{"text":"impl PartialEq&lt;ReaddirMode&gt; for ReaddirMode","synthetic":false,"types":[]}];
+implementors["polyfuse_kernel"] = [{"text":"impl PartialEq&lt;fuse_opcode&gt; for fuse_opcode","synthetic":false,"types":[]},{"text":"impl PartialEq&lt;fuse_notify_code&gt; for fuse_notify_code","synthetic":false,"types":[]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
