@@ -7,6 +7,7 @@ use crate::{
 use polyfuse_kernel::*;
 use std::{
     cmp,
+    collections::VecDeque,
     convert::{TryFrom, TryInto as _},
     ffi::OsStr,
     fmt,
@@ -16,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 use zerocopy::AsBytes as _;
@@ -295,6 +296,7 @@ struct SessionInner {
     bufsize: usize,
     exited: AtomicBool,
     notify_unique: AtomicU64,
+    request_vecs: Mutex<VecDeque<Vec<u8>>>,
 }
 
 impl SessionInner {
@@ -308,6 +310,14 @@ impl SessionInner {
     fn exit(&self) {
         // FIXME: choose appropriate atomic ordering.
         self.exited.store(true, Ordering::SeqCst)
+    }
+
+    fn store_request_vec(&self, arg: Vec<u8>) {
+        self.request_vecs.lock().unwrap().push_back(arg)
+    }
+
+    fn get_request_vec(&self) -> Option<Vec<u8>> {
+        self.request_vecs.lock().unwrap().pop_front()
     }
 }
 
@@ -343,6 +353,7 @@ impl Session {
                 bufsize,
                 exited: AtomicBool::new(false),
                 notify_unique: AtomicU64::new(0),
+                request_vecs: Mutex::new(VecDeque::with_capacity(100)),
             }),
         })
     }
@@ -370,7 +381,12 @@ impl Session {
 
         // FIXME: Align the allocated region in `arg` with the FUSE argument types.
         let mut header = fuse_in_header::default();
-        let mut arg = vec![0u8; self.inner.bufsize - mem::size_of::<fuse_in_header>()];
+        let mut arg = match self.inner.get_request_vec() {
+            Some(arg) => arg,
+            _ => {
+                vec![0u8; self.inner.bufsize - mem::size_of::<fuse_in_header>()]
+            }
+        };
 
         loop {
             match conn.read_vectored(&mut [
@@ -384,9 +400,7 @@ impl Session {
                             "dequeued request message is too short",
                         ));
                     }
-                    unsafe {
-                        arg.set_len(len - mem::size_of::<fuse_in_header>());
-                    }
+                    arg.truncate(len - mem::size_of::<fuse_in_header>());
 
                     break;
                 }
@@ -605,6 +619,17 @@ impl Request {
 
     pub fn reply_error(&self, code: i32) -> io::Result<()> {
         write_bytes(&self.session.conn, Reply::new(self.unique(), code, ()))
+    }
+}
+
+impl Drop for Request {
+    fn drop(&mut self) {
+        let mut arg = mem::replace(&mut self.arg, Vec::new());
+        arg.clear();
+        unsafe {
+            arg.set_len(arg.capacity());
+        }
+        self.session.store_request_vec(arg)
     }
 }
 
