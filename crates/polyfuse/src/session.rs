@@ -388,7 +388,7 @@ impl Session {
             }
         };
 
-        loop {
+        let len = loop {
             match conn.read_vectored(&mut [
                 io::IoSliceMut::new(header.as_bytes_mut()),
                 io::IoSliceMut::new(&mut arg[..]),
@@ -400,9 +400,9 @@ impl Session {
                             "dequeued request message is too short",
                         ));
                     }
-                    arg.truncate(len - mem::size_of::<fuse_in_header>());
+                    //arg.truncate(len - mem::size_of::<fuse_in_header>());
 
-                    break;
+                    break len;
                 }
 
                 Err(err) => match err.raw_os_error() {
@@ -417,12 +417,12 @@ impl Session {
                     _ => return Err(err),
                 },
             }
-        }
+        };
 
         Ok(Some(Request {
             session: self.inner.clone(),
             header,
-            arg,
+            arg: SubVec { buf: arg, len },
         }))
     }
 
@@ -560,13 +560,24 @@ where
     ))
 }
 
+struct SubVec<T> {
+    buf: Vec<T>,
+    len: usize,
+}
+
+impl<T> std::ops::Deref for SubVec<T> {
+    type Target = [T];
+    fn deref(&self) -> &Self::Target {
+        &self.buf[0..self.len]
+    }
+}
 // ==== Request ====
 
 /// Context about an incoming FUSE request.
 pub struct Request {
     session: Arc<SessionInner>,
     header: fuse_in_header,
-    arg: Vec<u8>,
+    arg: SubVec<u8>,
 }
 
 impl Request {
@@ -624,12 +635,14 @@ impl Request {
 
 impl Drop for Request {
     fn drop(&mut self) {
-        let mut arg = mem::replace(&mut self.arg, Vec::new());
-        arg.clear();
-        unsafe {
-            arg.set_len(arg.capacity());
-        }
-        self.session.store_request_vec(arg)
+        let arg = mem::replace(
+            &mut self.arg,
+            SubVec {
+                buf: vec![1, 2, 3],
+                len: 0,
+            },
+        );
+        self.session.store_request_vec(arg.buf)
     }
 }
 
